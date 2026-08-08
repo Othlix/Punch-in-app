@@ -204,6 +204,17 @@
   tbody tr:hover { background: var(--card); }
   .muted-note { display: block; font-size: 0.72rem; color: var(--muted); font-weight: 400; }
 
+  .month-block { margin-bottom: 26px; }
+  .month-title {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 8px;
+  }
+  .month-title .mt-name { font-weight: 700; font-size: 1.05rem; }
+  .month-title .mt-tot {
+    color: var(--accent); font-weight: 700; font-size: 0.95rem;
+    font-variant-numeric: tabular-nums;
+  }
+
   /* ---------- Edit form ---------- */
   .field { margin-bottom: 14px; display: flex; flex-direction: column; gap: 6px; }
   .field label { font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
@@ -350,9 +361,7 @@
         <span class="spacer"></span>
         <button class="download-btn" onclick="downloadCSV()">Download CSV</button>
       </div>
-      <div class="table-wrap">
-        <table id="sheetTable"></table>
-      </div>
+      <div id="sheetContent"></div>
     </div>
   </div>
 
@@ -485,6 +494,19 @@
   function fmtDate(ts) { return new Date(ts).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }); }
   function weekday(ts) { return new Date(ts).toLocaleDateString([], { weekday: "long" }); }
   function dayKey(ts) { const d = new Date(ts); return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate(); }
+  function monthKey(ts) { const d = new Date(ts); return d.getFullYear() + "-" + String(d.getMonth()).padStart(2, "0"); }
+  function monthLabel(ts) { return new Date(ts).toLocaleDateString([], { month: "long", year: "numeric" }); }
+  function groupByMonth() {
+    const sorted = entries.slice().sort((a, b) => a.start - b.start); // chronological within month
+    const map = new Map();
+    for (const e of sorted) {
+      const k = monthKey(e.start);
+      if (!map.has(k)) map.set(k, { label: monthLabel(e.start), list: [] });
+      map.get(k).list.push(e);
+    }
+    // newest month first
+    return [...map.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1)).map(x => x[1]);
+  }
 
   function startOfToday() { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); }
   function startOfWeek() {
@@ -860,54 +882,65 @@
     save(CUR_KEY, document.getElementById("currency").value);
     renderSheet();
   }
-  function sheetRows() { return entries.slice().sort((a, b) => a.start - b.start); }
   function renderSheet() {
     const rate = getRate();
     const cur = getCurrency();
-    const rows = sheetRows();
-    const table = document.getElementById("sheetTable");
+    const months = groupByMonth();
+    const container = document.getElementById("sheetContent");
 
-    if (!rows.length) {
-      table.innerHTML = '<tbody><tr><td class="empty">No sessions yet.</td></tr></tbody>';
+    if (!months.length) {
+      container.innerHTML = '<div class="empty">No sessions yet.</div>';
       return;
     }
 
-    let totalH = 0, totalBonus = 0, totalPay = 0;
-    const body = rows.map(e => {
-      const h = hoursOf(e);
-      const b = bonusOf(e);
-      const pay = h * rate + b;
-      totalH += h; totalBonus += b; totalPay += pay;
-      const bonusCell = b > 0
-        ? `${cur}${b.toFixed(2)}${noteOf(e) ? `<span class="muted-note">${esc(noteOf(e))}</span>` : ""}`
-        : "&mdash;";
-      return `<tr>
-        <td>${new Date(e.start).toLocaleDateString()}</td>
-        <td>${weekday(e.start)}</td>
-        <td>${fmtTime(e.start)}</td>
-        <td>${fmtTime(e.end)}</td>
-        <td class="num">${h.toFixed(2)}</td>
-        <td class="num">${bonusCell}</td>
-        <td class="num">${cur}${pay.toFixed(2)}</td>
-      </tr>`;
-    }).join("");
+    container.innerHTML = months.map(m => {
+      let totalH = 0, totalBonus = 0, totalPay = 0;
+      const body = m.list.map(e => {
+        const h = hoursOf(e);
+        const b = bonusOf(e);
+        const pay = h * rate + b;
+        totalH += h; totalBonus += b; totalPay += pay;
+        const bonusCell = b > 0
+          ? `${cur}${b.toFixed(2)}${noteOf(e) ? `<span class="muted-note">${esc(noteOf(e))}</span>` : ""}`
+          : "&mdash;";
+        return `<tr>
+          <td>${new Date(e.start).toLocaleDateString()}</td>
+          <td>${weekday(e.start)}</td>
+          <td>${fmtTime(e.start)}</td>
+          <td>${fmtTime(e.end)}</td>
+          <td class="num">${h.toFixed(2)}</td>
+          <td class="num">${bonusCell}</td>
+          <td class="num">${cur}${pay.toFixed(2)}</td>
+        </tr>`;
+      }).join("");
 
-    table.innerHTML = `
-      <thead>
-        <tr>
-          <th>Date</th><th>Day</th><th>Start</th><th>Finish</th>
-          <th class="num">Total (h)</th><th class="num">Bonus</th><th class="num">Pay</th>
-        </tr>
-      </thead>
-      <tbody>${body}</tbody>
-      <tfoot>
-        <tr>
-          <td colspan="4">Total</td>
-          <td class="num">${totalH.toFixed(2)}</td>
-          <td class="num">${cur}${totalBonus.toFixed(2)}</td>
-          <td class="num">${cur}${totalPay.toFixed(2)}</td>
-        </tr>
-      </tfoot>`;
+      return `
+        <div class="month-block">
+          <div class="month-title">
+            <span class="mt-name">${m.label}</span>
+            <span class="mt-tot">${cur}${totalPay.toFixed(2)} &middot; ${totalH.toFixed(2)} h</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th><th>Day</th><th>Start</th><th>Finish</th>
+                  <th class="num">Total (h)</th><th class="num">Bonus</th><th class="num">Pay</th>
+                </tr>
+              </thead>
+              <tbody>${body}</tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="4">Month total</td>
+                  <td class="num">${totalH.toFixed(2)}</td>
+                  <td class="num">${cur}${totalBonus.toFixed(2)}</td>
+                  <td class="num">${cur}${totalPay.toFixed(2)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>`;
+    }).join("");
   }
 
   function csvCell(v) {
@@ -917,28 +950,37 @@
   function downloadCSV() {
     const rate = getRate();
     const cur = getCurrency();
-    const rows = sheetRows();
+    const months = groupByMonth();
     const header = ["Date", "Day", "Start", "Finish", "Total (h)", "Bonus (" + cur + ")", "Note", "Pay (" + cur + ")"];
     const lines = [header.map(csvCell).join(",")];
 
-    let totalH = 0, totalBonus = 0, totalPay = 0;
-    for (const e of rows) {
-      const h = hoursOf(e);
-      const b = bonusOf(e);
-      const pay = h * rate + b;
-      totalH += h; totalBonus += b; totalPay += pay;
-      lines.push([
-        new Date(e.start).toLocaleDateString(),
-        weekday(e.start),
-        fmtTime(e.start),
-        fmtTime(e.end),
-        h.toFixed(2),
-        b.toFixed(2),
-        noteOf(e),
-        pay.toFixed(2)
-      ].map(csvCell).join(","));
+    let grandH = 0, grandBonus = 0, grandPay = 0;
+    for (const m of months) {
+      lines.push("");
+      lines.push(csvCell(m.label));
+      let totalH = 0, totalBonus = 0, totalPay = 0;
+      for (const e of m.list) {
+        const h = hoursOf(e);
+        const b = bonusOf(e);
+        const pay = h * rate + b;
+        totalH += h; totalBonus += b; totalPay += pay;
+        lines.push([
+          new Date(e.start).toLocaleDateString(),
+          weekday(e.start),
+          fmtTime(e.start),
+          fmtTime(e.end),
+          h.toFixed(2),
+          b.toFixed(2),
+          noteOf(e),
+          pay.toFixed(2)
+        ].map(csvCell).join(","));
+      }
+      grandH += totalH; grandBonus += totalBonus; grandPay += totalPay;
+      lines.push(["Total " + m.label, "", "", "", totalH.toFixed(2), totalBonus.toFixed(2), "", totalPay.toFixed(2)]
+        .map(csvCell).join(","));
     }
-    lines.push(["Total", "", "", "", totalH.toFixed(2), totalBonus.toFixed(2), "", totalPay.toFixed(2)]
+    lines.push("");
+    lines.push(["All-time total", "", "", "", grandH.toFixed(2), grandBonus.toFixed(2), "", grandPay.toFixed(2)]
       .map(csvCell).join(","));
 
     const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
@@ -963,4 +1005,3 @@
 </script>
 </body>
 </html>
-
